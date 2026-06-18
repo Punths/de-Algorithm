@@ -1,63 +1,32 @@
 const RANDOM_WIKI = "https://en.wikipedia.org/wiki/Special:Random";
 
 // Configurations (in milliseconds)
-const PASS_DURATION = 20 * 60 * 1000;       // 20 Minutes
-const LOCKOUT_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 Days
-const HEARTBEAT_INTERVAL = 60 * 1000;       // 1 Minute check
+const PASS_DURATION = 20 * 60 * 1000;             // 20 Minutes active pass
+const LOCKOUT_DURATION = 7 * 24 * 60 * 60 * 1000;   // 1 Week cooldown before next pass
 
-// Initialize storage and the anti-tamper heartbeat tracker
+// Initialize storage cleanly on install
 browser.runtime.onInstalled.addListener(() => {
   browser.storage.local.set({
     passExpiry: 0,
-    lockoutExpiry: 0,
-    lastKnownTime: Date.now(),
-    tamperLocked: false
+    lockoutExpiry: 0
   });
 });
 
-// Heartbeat system to detect system clock manipulation
-setInterval(async () => {
-  const data = await browser.storage.local.get(['lastKnownTime', 'passExpiry', 'lockoutExpiry', 'tamperLocked']);
-  if (data.tamperLocked) return;
-
-  const now = Date.now();
-  const timeDelta = now - data.lastKnownTime;
-
-  // Anti-Cheat Rules:
-  // 1. Time moved backwards (Delta is negative)
-  // 2. Time jumped forward aggressively (Delta is significantly greater than our 1-minute interval)
-  if (timeDelta < 0 || timeDelta > (HEARTBEAT_INTERVAL + 15000)) {
-    // If a pass was active or they are bypassing lockout, trigger penalty
-    if ((data.passExpiry && now < data.passExpiry) || (data.lockoutExpiry && now < data.lockoutExpiry)) {
-      await browser.storage.local.set({ 
-        tamperLocked: true,
-        lockoutExpiry: Date.now() + LOCKOUT_DURATION // Hard reset 7 days penalty
-      });
-    }
-  }
-
-  // Always update the checkpoint to current time if things are normal
-  await browser.storage.local.set({ lastKnownTime: Date.now() });
-}, HEARTBEAT_INTERVAL);
-
-
-// Listen for the activation command from the popup dropdown
+// Listen for the activation command from the popup script
 browser.runtime.onMessage.addListener(async (message) => {
-  if (message.action === "startPass") {
-    const data = await browser.storage.local.get(['passExpiry', 'lockoutExpiry', 'tamperLocked']);
+  if (message.action === "START_PASS") {
+    const data = await browser.storage.local.get(['lockoutExpiry']);
     const now = Date.now();
 
-    if (data.tamperLocked || (data.lockoutExpiry && now < data.lockoutExpiry)) {
+    // Check if user is currently on a active 1-week lockout cooldown
+    if (data.lockoutExpiry && now < data.lockoutExpiry) {
       return { success: false, reason: "Locked out" };
     }
 
-    const newPassExpiry = now + PASS_DURATION;
-    const newLockoutExpiry = newPassExpiry + LOCKOUT_DURATION;
-
+    // Set pass expiration and start the 1-week lockout timer immediately
     await browser.storage.local.set({
-      passExpiry: newPassExpiry,
-      lockoutExpiry: newLockoutExpiry,
-      lastKnownTime: now
+      passExpiry: now + PASS_DURATION,
+      lockoutExpiry: now + LOCKOUT_DURATION
     });
 
     return { success: true };
@@ -99,10 +68,10 @@ async function shouldBlock(url) {
 
   if (isYouTube(host)) {
     // Check if user has an active pass right now
-    const data = await browser.storage.local.get(['passExpiry', 'tamperLocked']);
+    const data = await browser.storage.local.get(['passExpiry']);
     const now = Date.now();
     
-    if (!data.tamperLocked && data.passExpiry && now < data.passExpiry) {
+    if (data.passExpiry && now < data.passExpiry) {
       return false; // Dynamic Exception: Allow them onto the homepage!
     }
 
@@ -135,7 +104,7 @@ async function handle(details) {
 
   if (url.protocol === "about:" || url.protocol === "moz-extension:") return;
 
-  // shouldBlock is now an async function, we must await its verification
+  // shouldBlock is an async function, we must await its verification
   const blockMe = await shouldBlock(url);
   if (blockMe) {
     await bounce(details.tabId);

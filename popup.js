@@ -2,16 +2,8 @@ const passBtn = document.getElementById('passBtn');
 const statusDiv = document.getElementById('status');
 
 function updateUI() {
-  browser.storage.local.get(['passExpiry', 'lockoutExpiry', 'tamperLocked']).then((data) => {
+  browser.storage.local.get(['passExpiry', 'lockoutExpiry']).then((data) => {
     const now = Date.now();
-
-    if (data.tamperLocked) {
-      passBtn.disabled = true;
-      passBtn.textContent = "Pass Unavailable";
-      statusDiv.textContent = "Clock manipulation detected. System locked.";
-      statusDiv.className = "status-msg lockdown";
-      return;
-    }
 
     // Scenario 1: User is currently on a 20-minute pass
     if (data.passExpiry && now < data.passExpiry) {
@@ -22,7 +14,6 @@ function updateUI() {
       const mins = Math.floor(timeLeft / 60000);
       const secs = Math.floor((timeLeft % 60000) / 1000);
       
-      // Use \n instead of <br> for linter safety
       statusDiv.textContent = `YouTube unblocked for:\n${mins}m ${secs}s`;
       statusDiv.className = "status-msg active";
       
@@ -54,8 +45,10 @@ function updateUI() {
 }
 
 passBtn.addEventListener('click', () => {
-  browser.runtime.sendMessage({ action: "startPass" }).then(() => {
-    updateUI();
+  browser.runtime.sendMessage({ action: "START_PASS" }).then((response) => {
+    if (response && response.success) {
+      updateUI();
+    }
   });
 });
 
